@@ -235,7 +235,7 @@ tracts2020PHX <-
                         "B15001_050E","B15001_009E",
                         "B19013_001E","B25058_001E",
                         "B06012_002E"), 
-          year=2020, state=42, county=101, 
+          year=2020, state=04, county=013, 
           geometry=TRUE, output="wide") %>%
   st_transform('ESRI:102728') %>%
   rename(TotalPop = B25026_001E, 
@@ -262,6 +262,7 @@ this lab.
 ```{r}
 
 allTractsPHX <- rbind(tracts2016PHX,tracts2020PHX)
+
 ```
 
 ### Wrangling Transit Open Data
@@ -269,12 +270,10 @@ allTractsPHX <- rbind(tracts2016PHX,tracts2020PHX)
 ```{r}
 #Making a feature of the light rail stops.
 
-PHXstops <- st_read("https://services2.arcgis.com/2t1927381mhTgWNC/arcgis/rest/services/ValleyMetroLightRailRidership/FeatureServer/0/query?outFields=*&where=1%3D1&f=geojson")
-%>%
+PHXstops <- st_read("https://services2.arcgis.com/2t1927381mhTgWNC/arcgis/rest/services/ValleyMetroLightRailRidership/FeatureServer/0/query?outFields=*&where=1%3D1&f=geojson") %>%
       mutate(Line = "Valley Metro") %>%
-      dplyr::select(StationId, Line)
-
-  st_transform(st_crs(PHXstops))  #This was necessary in the lab, but we'll have to check what coordinate systems each set of data is in to see if we have to use this function to make CRS.
+      dplyr::select(StationId, Line) %>%
+  st_transform('ESRI:102728')  #This was necessary in the lab, but we'll have to check what coordinate systems each set of data is in to see if we have to use this function to make CRS.
 
 ```
 
@@ -285,13 +284,14 @@ Let's visualize it
 ggplot() + 
   geom_sf(data=st_union(allTractsPHX)) +
   geom_sf(data=PHXstops, 
-          aes(colour = , 
+          aes(colour = Line), 
           show.legend = "point", size= 2) +
   scale_colour_manual(values = c("orange","blue")) +
-  labs(title="PHX Stops", 
+  labs(title="Valley Metro Stops", 
        subtitle="Phoenix, AZ", 
        caption="Figure 2.5") +
   mapTheme()
+
 ```
 
 ### Relating PHX Stops and Tracts
@@ -343,6 +343,8 @@ spatial data frame.
 ```{r}
 #Creates buffer feature that we can use to select ACS tracts.
 buffer <- filter(PHXBuffers, Legend=="Unioned Buffer")
+
+plot(buffer)
 ```
 
 ### Spatial Intersection of tracts and buffers
@@ -378,8 +380,10 @@ assumed..." don't worry about it.
 ```{r}
 clip <- 
   st_intersection(buffer, tracts2016PHX) %>%
-  dplyr::select(totalPop16PHX) %>%
+  dplyr::select(TotalPop) %>%
   mutate(Selection_Type = "Clip")
+
+
 ```
 
 #### Spatial intersection with `st_intersects()` on polygons
@@ -418,12 +422,12 @@ outcome.
 # approach #1: sub-setting a spatial object with a spatial object using the '[' brackets.
 selection1 <- 
   tracts2016PHX[buffer,] %>%
-  dplyr::select(totalPop16PHX) %>%
+  dplyr::select(TotalPop) %>%
   mutate(Selection_Type = "Spatial Selection")
 
 # approach #2: using `st_intersects` as a verbose way to do approach #1
 selection2 <- tracts2016PHX[st_intersects(tracts2020PHX, buffer) %>% lengths > 0, ] %>%
-  dplyr::select(totalPop16PHX) %>%
+  dplyr::select(TotalPop) %>%
   mutate(Selection_Type = "Spatial Selection")
 
 # approach #3: use `st_join` to do a spatial join and remove the non-intersecting polygons
@@ -461,9 +465,9 @@ don't worry about it.
 
 ```{r}
 selectCentroids <-
-  st_centroid(tracts16)[buffer,] %>%
+  st_centroid(tracts2016PHX)[buffer,] %>%
   st_drop_geometry() %>%
-  left_join(., dplyr::select(tracts16, GEOID), by = "GEOID") %>%
+  left_join(., dplyr::select(tracts2016PHX, GEOID), by = "GEOID") %>%
   st_sf() %>%
   dplyr::select(TotalPop) %>%
   mutate(Selection_Type = "Select by Centroids")
@@ -476,10 +480,11 @@ intersections <- rbind(clip, selection1, selectCentroids)
 
 ggplot() +
   geom_sf(data=intersections, aes(fill = TotalPop)) +
-  geom_sf(data=septaStops, show.legend = "point") +
+  geom_sf(data=PHXstops, show.legend = "point") +
   scale_fill_viridis_c() +
   facet_wrap(~Selection_Type) + 
   mapTheme()
+
 ```
 
 ## Bonus Exercise - Can you create a small multiple map of the three types of operations? (NOT GRADED)
@@ -495,20 +500,21 @@ then examine it. What represents the joins/doesn't join dichotomy? Note
 that this contains a correct 2016-2020 inflation calculation
 
 ```{r}
-allTracts.group <- 
+allTractsPHX.group <-
   rbind(
-    st_centroid(allTracts)[buffer,] %>%
+    st_centroid(allTractsPHX)[buffer,] %>%
       st_drop_geometry() %>%
-      left_join(allTracts) %>%
+      left_join(allTractsPHX) %>%
       st_sf() %>%
       mutate(TOD = "TOD"),
-    st_centroid(allTracts)[buffer, op = st_disjoint] %>%
+    st_centroid(allTractsPHX)[buffer, op = st_disjoint] %>%
       st_drop_geometry() %>%
-      left_join(allTracts) %>%
+      left_join(allTractsPHX) %>%
       st_sf() %>%
       mutate(TOD = "Non-TOD")) %>%
   mutate(MedRent.inf = ifelse(year == "2009", MedRent * 1.14, MedRent)) 
 
+plot(allTractsPHX.group)
 ```
 
 Can you try to create the maps seen in the text? The solutions are
@@ -517,8 +523,8 @@ contained in "map_exercise.R"
 ### TOD Indicator Tables
 
 ```{r}
-allTracts.Summary <- 
-  st_drop_geometry(allTracts.group) %>%
+allTractsPHX.Summary <- 
+  st_drop_geometry(allTractsPHX.group) %>%
   group_by(year, TOD) %>%
   summarize(Rent = mean(MedRent, na.rm = T),
             Population = mean(TotalPop, na.rm = T),
@@ -526,7 +532,8 @@ allTracts.Summary <-
             Percent_Bach = mean(pctBachelors, na.rm = T),
             Percent_Poverty = mean(pctPoverty, na.rm = T))
 
-kable(allTracts.Summary) %>%
+
+kable(allTractsPHX.Summary) %>%
   kable_styling() %>%
   footnote(general_title = "\n",
            general = "Table 2.2")
@@ -539,7 +546,7 @@ too)
 Notice how we pipe the kable() command here
 
 ```{r}
-allTracts.Summary %>%
+allTractsPHX.Summary %>%
   unite(year.TOD, year, TOD, sep = ": ", remove = T) %>%
   gather(Variable, Value, -year.TOD) %>%
   mutate(Value = round(Value, 2)) %>%
@@ -557,7 +564,7 @@ one up please) To go from wide to long Why do we do this?? Notice we can
 "pipe" a ggplot call right into this operation!
 
 ```{r}
-allTracts.Summary %>%
+allTractsPHX.Summary %>%
   gather(Variable, Value, -year, -TOD) %>%
   ggplot(aes(year, Value, fill = TOD)) +
   geom_bar(stat = "identity", position = "dodge") +
@@ -607,21 +614,21 @@ allTracts.threeMarkets <-
 ### Example of using `multipleRingBuffer()` function
 
 ```{r}
-allTracts <- rbind(tracts20,tracts16)
+allTractsPHX <- rbind(tracts2020PHX,tracts2016PHX)
 
-allTracts.rings <-
-  st_join(st_centroid(dplyr::select(allTracts, GEOID, year)), 
-          multipleRingBuffer(st_union(septaStops), 47520, 2640)) %>%
+allTractsPHX.rings <-
+  st_join(st_centroid(dplyr::select(allTractsPHX, GEOID, year)), 
+          multipleRingBuffer(st_union(PHXstops), 47520, 2640)) %>%
   st_drop_geometry() %>%
-  left_join(dplyr::select(allTracts, GEOID, MedRent, year), 
+  left_join(dplyr::select(allTractsPHX, GEOID, MedRent, year), 
             by=c("GEOID"="GEOID", "year"="year")) %>%
   st_sf() %>%
   mutate(distance = distance / 5280) #convert to miles
 
   ggplot() +
-    geom_sf(data=multipleRingBuffer(st_union(septaStops), 47520, 2640)) +
-    geom_sf(data=septaStops, size=1) +
-    geom_sf(data=st_union(tracts20), fill=NA, size=1.2) +
+    geom_sf(data=multipleRingBuffer(st_union(PHXstops), 47520, 2640)) +
+    geom_sf(data=PHXstops, size=1) +
+    geom_sf(data=st_union(tracts2020PHX), fill=NA, size=1.2) +
     labs(title="Half mile buffers") +
     mapTheme()
 
