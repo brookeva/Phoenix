@@ -271,11 +271,10 @@ allTractsPHX <- rbind(tracts2016PHX,tracts2020PHX)
 
 PHXstops <- st_read("https://services2.arcgis.com/2t1927381mhTgWNC/arcgis/rest/services/ValleyMetroLightRailRidership/FeatureServer/0/query?outFields=*&where=1%3D1&f=geojson")
 %>%
-  st_transform(st_crs(tracts16))  #This was necessary in the lab, but we'll have to check what coordinate systems each set of data is in to see if we have to use this function to make CRS.
+      mutate(Line = "Valley Metro") %>%
+      dplyr::select(StationId, Line)
 
-
-ggplot() + 
-  geom_sf(data=PHXstops)
+  st_transform(st_crs(PHXstops))  #This was necessary in the lab, but we'll have to check what coordinate systems each set of data is in to see if we have to use this function to make CRS.
 
 ```
 
@@ -286,7 +285,7 @@ Let's visualize it
 ggplot() + 
   geom_sf(data=st_union(allTractsPHX)) +
   geom_sf(data=PHXstops, 
-          aes(colour = line), 
+          aes(colour = , 
           show.legend = "point", size= 2) +
   scale_colour_manual(values = c("orange","blue")) +
   labs(title="PHX Stops", 
