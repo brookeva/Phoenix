@@ -1,0 +1,444 @@
+---
+title: 'Lab 2: Why Start With Indicators?'
+author: "Brooke Acosta, Kate Tanabe, Michael Dunst"
+date: "2022-08-22"
+output:
+  pdf_document: default
+  html_document: default
+code_folding: hide
+editor_options:
+  markdown:
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Why Start With Indicators?
+
+from Steif (2021), [Section
+1.1](https://urbanspatial.github.io/PublicPolicyAnalytics/TOD.html#why-start-with-indicators):
+This is an indicator - a stylized fact that gives simple insight into a
+complicated phenomena. Mastering indicators is critical for conveying
+nuanced context to non-technical audiences. Here are four suggestions on
+what makes a good indicator:
+
+-   A *relatable* indicator is typically motivated by a pressing policy
+    concern. "How is it possible that passenger rail in New York City
+    has such widespread delays, service suspensions, and rider
+    discontent?" A great indicator solicits interest from an audience.
+
+-   A *simple* indicator may be used as an exploratory tool in place of
+    more complex statistics. Simplicity helps the audience understand
+    the indicator's significance and keeps them engaged in the analysis.
+
+-   A *relative* indicator draws a contrast. "How can New York City
+    passenger rail, with the most trips, still loose more money than
+    each of the next ten largest cities?" Contextualizing an indicator
+    with a relevant comparison makes for greater impact.
+
+-   A *good* indicator typically generates more questions than answers.
+    Thus, a good indicator fits into a broader narrative which helps
+    motivate a more robust research agenda and ultimately, more applied
+    analytics.
+
+In this lab we will walk through:
+
+1.  Use {tidycensus} to gather ACS data for two different years
+
+2.  Visualize data and maps with {ggplot2}
+
+3.  Use the {sf} package for geospatial operations such as **union**,
+    **intersection** and **buffer**
+
+4.  Use maps and tables to analyze change over time *given* the products
+    of the geospatial operations
+
+### Load packages and functions
+
+```{r setup_packages, warning = FALSE, message = FALSE}
+# Load Libraries
+
+library(tidyverse)
+library(tidycensus)
+library(sf)
+library(kableExtra)
+
+options(scipen=999)
+options(tigris_class = "sf")
+
+source("https://raw.githubusercontent.com/urbanSpatial/Public-Policy-Analytics-Landing/master/functions.r")
+
+palette5 <- c("#f0f9e8","#bae4bc","#7bccc4","#43a2ca","#0868ac")
+```
+
+```{r load_key, warning = FALSE, eval = FALSE}
+census_api_key("54acb9909dac90671a10390dae4d7ec7d77bb5bb", overwrite = TRUE, install = TRUE)
+```
+
+### Use `get_acs()` to get 2016 and 2020 ACS data
+
+```{r results='hide'}
+tracts2016PHX <-  
+  get_acs(geography = "tract",
+          variables = c("B25026_001E","B02001_002E",
+                        "B15001_050E","B15001_009E",
+                        "B19013_001E", "B25058_001E",
+                        "B06012_002E"), 
+          year=2016, state=04,
+          county=013, geometry=TRUE) %>% 
+  st_transform('ESRI:102728')
+
+tracts2020PHX <-  
+  get_acs(geography = "tract",
+          variables = c("B25026_001E","B02001_002E",
+                        "B15001_050E","B15001_009E",
+                        "B19013_001E", "B25058_001E",
+                        "B06012_002E"), 
+          year=2020, state=04,
+          county=013, geometry=TRUE) %>% 
+  st_transform('ESRI:102728')
+```
+
+#### Wide data vs long data (and `spread`vs `gather`)
+
+
+```{r}
+glimpse(tracts2016PHX)
+```
+#### Wrangling Transit Data
+
+```{r}
+#Making a feature of the light rail stops.
+
+PHXstops <- st_read("https://services2.arcgis.com/2t1927381mhTgWNC/arcgis/rest/services/ValleyMetroLightRailRidership/FeatureServer/0/query?outFields=*&where=1%3D1&f=geojson") %>%
+      mutate(Line = "Valley Metro") %>%
+      dplyr::select(StationId, Line) %>%
+  st_transform('ESRI:102728')  #This was necessary in the lab, but we'll have to check what coordinate systems each set of data is in to see if we have to use this function to make CRS.
+```
+#### Make Buffers 
+
+```{r}
+#Creates a buffer and unioned buffer for 1/2 mile, as the bird flys, from each stop.
+PHXBuffers <- 
+  rbind(
+    st_buffer(PHXstops, 2640) %>%
+      mutate(Legend = "Buffer") %>%
+      dplyr::select(Legend),
+    st_union(st_buffer(PHXstops, 2640)) %>%
+      st_sf() %>%
+      mutate(Legend = "Unioned Buffer"))
+```
+
+#### We create a new data frame consisting only of population (First Small Multiple)
+
+```{r}
+Pop16_20 <- 
+  rbind(
+      tracts2016PHX %>%
+      filter(variable=="B25026_001") %>%
+      mutate(year=2016), 
+      tracts2020PHX %>%
+      filter(variable=="B25026_001") %>%
+      mutate(year=2020) )
+
+ggplot() +
+  geom_sf(data = Pop16_20, aes(fill = q5(estimate), group=year), color=NA) +
+    scale_fill_manual(values = palette5,
+                    labels = qBr(Pop16_20, "estimate"),
+                    name = "Popluation\n(Quintile Breaks)") +
+    facet_wrap(~year) +
+    labs(title = "Population in occupied housing", subtitle = "Phoenix; 2016 vs. 2020") +
+    mapTheme() + theme(plot.title = element_text(size=22)) +
+    geom_sf(data=PHXBuffers, color="red", fill=NA)
+```
+#### Rent (Second Small Multiple)
+
+```{r}
+Rent16_20 <- 
+  rbind(
+      tracts2016PHX %>%
+      filter(variable=="B25058_001") %>%
+      mutate(year=2016),
+      tracts2020PHX %>%
+      filter(variable=="B25058_001") %>%
+      mutate(year=2020))
+
+ggplot() +
+  geom_sf(data = Rent16_20, aes(fill = q5(estimate), group=year), color=NA) +
+    scale_fill_manual(values = palette5,
+                    labels = qBr(Rent16_20, "estimate"),
+                    name = "Rent ($ per month)\n(Quintile Breaks)") +
+    facet_wrap(~year) +
+    labs(title = "Rent", subtitle = "Phoenix; 2016 vs. 2020") +
+    mapTheme() + theme(plot.title = element_text(size=22)) +
+    geom_sf(data=PHXBuffers, color="red", fill=NA)
+```
+#### Household Income (Third Small Multiple)
+
+```{r}
+HHinc16_20 <- 
+  rbind(
+      tracts2016PHX %>%
+      filter(variable=="B19013_001") %>%
+      mutate(year=2016),
+      tracts2020PHX %>%
+      filter(variable=="B19013_001") %>%
+      mutate(year=2020))
+
+ggplot() +
+  geom_sf(data = HHinc16_20, aes(fill = q5(estimate), group=year), color=NA) +
+    scale_fill_manual(values = palette5,
+                    labels = qBr(HHinc16_20, "estimate"),
+                    name = "Household Income ($)\n(Quintile Breaks)") +
+    facet_wrap(~year) +
+    labs(title = "Median Household Income in the past 12 months", subtitle = "Phoenix; 2016 vs. 2020") +
+    mapTheme() + theme(plot.title = element_text(size=22)) +
+    geom_sf(data=PHXBuffers, color="red", fill=NA)
+```
+#### Poverty Status (Fourth Small Multiple)
+
+```{r}
+Pov16_20 <- 
+  rbind(
+      tracts2016PHX %>%
+      filter(variable=="B06012_002") %>%
+      mutate(year=2016),
+      tracts2020PHX %>%
+      filter(variable=="B06012_002") %>%
+      mutate(year=2020))
+
+ggplot() +
+  geom_sf(data = Pov16_20, aes(fill = q5(estimate), group=year), color=NA) +
+    scale_fill_manual(values = palette5,
+                    labels = qBr(Pov16_20, "estimate"),
+                    name = "Below 100% of the Poverty Level\n(Quintile Breaks)") +
+    facet_wrap(~year) +
+    labs(title = "Poverty", subtitle = "Phoenix; 2016 vs. 2020") +
+    mapTheme() + theme(plot.title = element_text(size=22)) +
+    geom_sf(data=PHXBuffers, color="red", fill=NA)
+```
+
+#### Spread 2016 Data 
+
+```{r}
+tracts2016PHX <- 
+  tracts2016PHX %>%
+  dplyr::select( -NAME, -moe) %>%
+  spread(key = variable, value = estimate) %>%
+  rename(TotalPop = B25026_001, 
+         Whites = B02001_002,
+         FemaleBachelors = B15001_050, 
+         MaleBachelors = B15001_009,
+         MedHHInc = B19013_001, 
+         MedRent = B25058_001,
+         TotalPoverty = B06012_002)
+
+tracts2016PHX <- 
+  tracts2016PHX %>%
+  mutate(pctWhite = ifelse(TotalPop > 0, Whites / TotalPop, 0),
+         pctBachelors = ifelse(TotalPop > 0, ((FemaleBachelors + MaleBachelors) / TotalPop), 0),
+         pctPoverty = ifelse(TotalPop > 0, TotalPoverty / TotalPop, 0),
+         year = "2016") %>%
+  dplyr::select(-Whites,-FemaleBachelors,-MaleBachelors,-TotalPoverty)
+```
+#### Spread 2020 Data & Make Rates
+```{r}
+tracts2020PHX <- 
+  get_acs(geography = "tract", 
+          variables = c("B25026_001E","B02001_002E",
+                        "B15001_050E","B15001_009E",
+                        "B19013_001E","B25058_001E",
+                        "B06012_002E"), 
+          year=2020, state=04, county=013, 
+          geometry=TRUE, output="wide") %>%
+  st_transform('ESRI:102728') %>%
+  rename(TotalPop = B25026_001E, 
+         Whites = B02001_002E,
+         FemaleBachelors = B15001_050E, 
+         MaleBachelors = B15001_009E,
+         MedHHInc = B19013_001E, 
+         MedRent = B25058_001E,
+         TotalPoverty = B06012_002E) %>%
+  dplyr::select(-NAME, -starts_with("B")) %>%
+  mutate(pctWhite = ifelse(TotalPop > 0, Whites / TotalPop,0),
+         pctBachelors = ifelse(TotalPop > 0, ((FemaleBachelors + MaleBachelors) / TotalPop),0),
+         pctPoverty = ifelse(TotalPop > 0, TotalPoverty / TotalPop, 0),
+         year = "2020") %>%
+  dplyr::select(-Whites, -FemaleBachelors, -MaleBachelors, -TotalPoverty)
+```
+
+#### Combine 2016 and 2020 Data into an "All Tracts DF"
+```{r}
+allTractsPHX <- rbind(tracts2016PHX,tracts2020PHX)
+```
+
+### Wrangling Transit Open Data
+
+```{r}
+#Making a feature of the light rail stops.
+
+PHXstops <- st_read("https://services2.arcgis.com/2t1927381mhTgWNC/arcgis/rest/services/ValleyMetroLightRailRidership/FeatureServer/0/query?outFields=*&where=1%3D1&f=geojson") %>%
+      mutate(Line = "Valley Metro") %>%
+      dplyr::select(StationId, Line) %>%
+  st_transform('ESRI:102728')  #This was necessary in the lab, but we'll have to check what coordinate systems each set of data is in to see if we have to use this function to make CRS.
+
+```
+
+#### Visualize PHX stops
+
+```{r}
+#Can only plot this once we bring in the ACS data for PHX
+ggplot() + 
+  geom_sf(data=st_union(allTractsPHX)) +
+  geom_sf(data=PHXstops, 
+          aes(colour = Line), 
+          show.legend = "point", size= 2) +
+  scale_colour_manual(values = c("orange","blue")) +
+  labs(title="Valley Metro Stops", 
+       subtitle="Phoenix, AZ", 
+       caption="Figure") +
+  mapTheme()
+
+ggplot() +
+  facet_wrap(~Legend) +
+  geom_sf(data=PHXBuffers) +
+  geom_sf(data=PHXstops, show.legend = "point") +
+  mapTheme()
+
+```
+
+### Relating PHX Stops and Tracts
+
+```{r}
+selectionPHX <- tracts2016PHX %>% 
+  st_join(PHXBuffers, join = st_intersects) %>% 
+  filter(!is.na(Legend)) %>% 
+  dplyr::select(TotalPop) %>%
+  mutate(Selection_Type = "Spatial Intersects")
+
+```
+
+#### Create Summary Tables
+
+```{r}
+allTractsPHX.group <-
+  rbind(
+    st_centroid(allTractsPHX)[PHXBuffers,] %>%
+      st_drop_geometry() %>%
+      left_join(allTractsPHX) %>%
+      st_sf() %>%
+      mutate(TOD = "TOD"),
+   
+     st_centroid(allTractsPHX)[PHXBuffers, op = st_disjoint] %>%
+      st_drop_geometry() %>%
+      left_join(allTractsPHX) %>%
+      st_sf() %>%
+      mutate(TOD = "Non-TOD")) %>%
+  mutate(MedRent.inf = ifelse(year == "2009", MedRent * 1.14, MedRent)) 
+
+allTractsPHX.Summary <- 
+  st_drop_geometry(allTractsPHX.group) %>%
+  group_by(year, TOD) %>%
+  summarize(Rent = mean(MedRent, na.rm = T),
+            Population = mean(TotalPop, na.rm = T),
+            Percent_White = mean(pctWhite, na.rm = T),
+            Percent_Bach = mean(pctBachelors, na.rm = T),
+            Percent_Poverty = mean(pctPoverty, na.rm = T))
+
+
+kable(allTractsPHX.Summary) %>%
+  kable_styling() %>%
+  footnote(general_title = "\n",
+           general = "Table 2.2")
+```
+#### Grouped Bar Plot
+
+```{r}
+allTractsPHX.Summary %>%
+  gather(Variable, Value, -year, -TOD) %>%
+  ggplot(aes(year, Value, fill = TOD)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  facet_wrap(~Variable, scales = "free", ncol=5) +
+  scale_fill_manual(values = c("#bae4bc", "#0868ac")) +
+  labs(title = "Indicator differences across time and space") +
+  plotTheme() + theme(legend.position="bottom")
+```
+
+#### Graduated Symbol Map
+
+```{r}
+BufferOnly <- filter(PHXBuffers, Legend == "Buffer") %>%
+  st_transform('ESRI:102728') %>%
+  tibble::rowid_to_column("ID")
+
+PHXstops <- st_join(BufferOnly, tracts2020PHX, join = st_intersects) %>%
+  dplyr::select(ID, Legend, GEOID, TotalPop, MedRent, geometry) %>%
+  dplyr::group_by(ID) %>%
+  summarize(pop=mean(TotalPop, na.rm = TRUE), rent=mean(MedRent, na.rm = TRUE))
+
+ggplot() +
+  geom_sf(data = tracts2020PHX) +
+  geom_sf(data = st_centroid(PHXstops),
+          pch = 21,
+          aes(size = pop),
+          fill = alpha("red", 0.7),
+          col = "grey20") +
+  labs(size = "Population") +
+  scale_size(range = c(1, 5))
+  
+```
+```{r}
+ggplot() +
+  geom_sf(data = tracts2020PHX) +
+  geom_sf(data = st_centroid(PHXstops),
+          pch = 21,
+          aes(size = rent),
+          fill = alpha("blue", 0.7),
+          col = "grey20") +
+  labs(size = "Rent") +
+  scale_size(range = c(1, 5)) + 
+  mapTheme()
+```
+### GEOM_Line Plot
+#### Start with Half Mi Buffers
+```{r}
+allTracts <- rbind(tracts2020PHX,tracts2016PHX)
+
+allTracts.rings <-
+  st_join(st_centroid(dplyr::select(allTracts, GEOID, year)), 
+          multipleRingBuffer(st_union(PHXstops), 14484, 805)) %>%
+  st_drop_geometry() %>%
+  left_join(dplyr::select(allTracts, GEOID, MedRent, year), 
+            by=c("GEOID"="GEOID", "year"="year")) %>%
+  st_sf() %>%
+  mutate(distance = distance / 1610) 
+
+  ggplot() +
+    geom_sf(data=multipleRingBuffer(st_union(PHXstops), 14484, 805)) +
+    geom_sf(data=PHXstops, size=1) +
+    geom_sf(data=st_union(tracts2020PHX), fill=NA, size=1.2) +
+    labs(title="Half mile buffers") +
+    mapTheme()
+```
+#### Now Do the Plot
+
+```{r}
+allTractsPHX.Summary <- allTracts.rings %>%
+  dplyr::select(year, distance, MedRent) %>%
+  st_drop_geometry() %>%
+  group_by(year, distance) %>%
+  summarize(Rent=median(MedRent, na.rm=TRUE))
+
+ggplot(data=allTractsPHX.Summary, aes(x=distance, y=Rent, group=year)) +
+  geom_line(aes(color=year), size=2) +
+  geom_point(aes(color=year), size=3.5) +
+  scale_color_manual(values = c("#bdc9e1", "016c59")) +
+  labs(title = "Rent as function of distance to light rail Stations", subtitle = "Census Tracts") +
+  xlab("miles") +
+  ylab("Average Rent ($)")
+```
+
+
+
